@@ -1,0 +1,92 @@
+﻿@model _3dmodel.Models.AssetModel
+<link rel="stylesheet" href="https://kendo.cdn.telerik.com/themes/12.0.0/bootstrap/bootstrap-main.css" />
+<style>
+    .annotation-line {
+        position: absolute;
+        height: 1px;
+        background: white;
+        transform-origin: 0 0;
+        pointer-events: none;
+    }
+    .annotation {
+        position: absolute;
+        padding: 7px 10px;
+        background: black;
+        border: 1px solid gray;
+        border-radius: 5px;
+        color: white;
+        font-size: 11px;
+        pointer-events: none;
+    }
+    .annotation-title {
+        margin: 0 0 2px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    .annotation-property-value {
+        color: lightskyblue;
+        font-size: 13px;
+        font-weight: 500;
+    }}
+</style>
+<div style="min-height:100vh;margin:0;background:whitesmoke;font-family:Arial,sans-serif">
+    <div style="height:64px;background:white;border-bottom:1px solid lightgray;display:flex;align-items:center;padding:0 24px;box-sizing:border-box">
+        <h1 style="margin:0;font-size:22px;font-weight:600;color:black">3D Model Viewer</h1>
+    </div>
+    <div style="display:flex;gap:18px;padding:18px;box-sizing:border-box">
+        <div style="width:300px;flex-shrink:0">
+            <div class="k-card">
+                <div class="k-card-header">
+                    <h2 class="k-card-title">Model Upload</h2>
+                </div>
+                <div class="k-card-body">
+                    <div style="text-align:center;padding:18px 8px">
+                        <div style="font-size:42px;margin-bottom:12px">&#128193;</div>
+                        <p style="margin:0 0 16px;color:gray;font-size:14px;line-height:1.5">Select the folder containing your 3D model and related files.</p>
+                        <div style="display:flex;justify-content:center;gap:10px">
+                            <button type="button" id="chooseFolder" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
+                                <span class="k-button-text">Choose Folder</span>
+                            </button>
+                            <button type="button" id="chooseFiles" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
+                                <span class="k-button-text">Choose Files</span>
+                            </button>
+                        </div>
+                        <input type="file" id="filess" webkitdirectory directory multiple hidden />
+                        <input type="file" id="files" multiple hidden />
+                        <div id="fileName" style="margin-top:14px;color:gray;font-size:13px;word-break:break-word">No Folder Chosen</div>
+                        <div id="selectedFiles"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="k-card" style="flex:1;min-width:0;overflow:hidden">
+            <div style="height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 14px 0 18px;box-sizing:border-box;border-bottom:1px solid lightgray;background:white">
+                <h2 class="k-card-title">3D Model Viewer</h2>
+                <button type="button" id="resetView" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
+                    <span class="k-button-text">Reset View</span>
+                </button>
+            </div>
+            <div id="viewer" data-model-url="@(Model.FileUrl != null ? Url.Content(Model.FileUrl) : "")" data-file-type="@Model.Extension" style="position:relative;height:calc(100vh - 158px);min-height:500px;overflow:hidden;background:darkslategray">
+                <div id="annotationLayer" style="position:absolute;left:0;top:0;width:100%;height:100%;z-index:11;pointer-events:none">
+                    <div id="annotationTemplate" style="display:none">
+                        <div class="annotation-line"></div>
+                        <div class="annotation">
+                            <div class="annotation-title"></div>
+                            <div class="annotation-property-value"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script src="~/Scripts/jquery-3.7.0.js"></script>
+<script src="https://kendo.cdn.telerik.com/2025.3.812/js/kendo.all.min.js"></script>
+<script type="importmap">
+    {
+        "imports": {
+            "three": "/Scripts/three.module.js"
+        }
+    }
+</script>
+<script type="module" src="~/Scripts/modelViewer.js"></script>

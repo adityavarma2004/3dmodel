@@ -1,0 +1,181 @@
+﻿body {
+    margin: 0;
+    background: #f4f6f8;
+    font-family: Arial, sans-serif;
+}
+
+.app {
+    min-height: 100vh;
+}
+
+.app-header {
+    height: 64px;
+    background: #ffffff;
+    border-bottom: 1px solid #e1e5e9;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    box-sizing: border-box;
+}
+
+.app-title {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+    color: #252a30;
+}
+
+.main-content {
+    display: flex;
+    gap: 18px;
+    padding: 18px;
+    box-sizing: border-box;
+}
+
+.left-panel {
+    width: 280px;
+    flex-shrink: 0;
+}
+
+.viewer-card {
+    flex: 1;
+    min-width: 0;
+    background: #ffffff;
+    border: 1px solid #e1e5e9;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.k-card {
+    border: 1px solid #e1e5e9;
+    box-shadow: none;
+}
+
+.section-title {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+    color: #252a30;
+}
+
+.k-card-header {
+    background: #ffffff;
+    border-bottom: 1px solid #e1e5e9;
+}
+
+.upload-box {
+    text-align: center;
+    padding: 18px 8px;
+}
+
+.folder-icon {
+    font-size: 42px;
+    margin-bottom: 12px;
+}
+
+.upload-box p {
+    margin: 0 0 16px;
+    color: #68717b;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+#fileName {
+    margin-top: 14px;
+    color: #68717b;
+    font-size: 13px;
+    word-break: break-word;
+}
+
+.viewer-header {
+    height: 58px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px 0 18px;
+    border-bottom: 1px solid #e1e5e9;
+    box-sizing: border-box;
+}
+
+.viewer-container {
+    position: relative;
+    height: calc(100vh - 158px);
+    min-height: 500px;
+    overflow: hidden;
+    background: #20252d;
+}
+
+    .viewer-container canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+    }
+
+#annotationLines {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10;
+    pointer-events: none;
+}
+
+.annotation-line {
+    stroke: #ffffff;
+    stroke-width: 1;
+    opacity: 0.8;
+}
+
+#annotationLayer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 11;
+    pointer-events: none;
+}
+
+.annotation {
+    position: absolute;
+    min-width: 120px;
+    padding: 7px 10px;
+    background: rgba(25, 29, 35, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 5px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+    box-sizing: border-box;
+    color: #ffffff;
+    font-size: 11px;
+    line-height: 1.3;
+    pointer-events: none;
+}
+
+.annotation-title {
+    margin: 0 0 2px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #ffffff;
+    letter-spacing: 0.3px;
+}
+
+.annotation-property-value {
+    color: #8fd3ff;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+@media (max-width: 900px) {
+    .main-content {
+        flex-direction: column;
+    }
+
+    .left-panel {
+        width: 100%;
+    }
+
+    .viewer-container {
+        height: 600px;
+    }
+}
