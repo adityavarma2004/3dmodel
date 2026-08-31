@@ -1,5 +1,7 @@
 ﻿using Newtonsoft.Json;
 using System.Collections.Generic;
+using System.Configuration;
+using System.Data.SqlClient;
 using System.IO;
 using System.Linq;
 using System.Web;
@@ -18,7 +20,8 @@ namespace _3dmodel.Controllers
             model.Assets = Session["Assets"] as string;
             return View(model);
         }
-        [HttpPost]public ActionResult Upload(AssetModel model)
+        [HttpPost]
+        public ActionResult Upload(AssetModel model)
         {
             string modelPath = Server.MapPath("~/Uploads/Model/");
             if (Directory.Exists(modelPath))
@@ -85,6 +88,43 @@ namespace _3dmodel.Controllers
             {
                 success = true
             });
+        }
+        [HttpPost]
+        public JsonResult SaveAnnotations(string annotationJson)
+        {
+            string modelName = Session["FileName"] as string;
+            using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ModelViewerDB"].ConnectionString))
+            {
+                string query = "IF EXISTS (SELECT 1 FROM ModelAnnotations WHERE ModelName=@ModelName) UPDATE ModelAnnotations SET AnnotationJson=@AnnotationJson WHERE ModelName=@ModelName ELSE INSERT INTO ModelAnnotations (ModelName, AnnotationJson) VALUES (@ModelName, @AnnotationJson)";
+                using (SqlCommand cmd = new SqlCommand(query, con))
+                {
+                    cmd.Parameters.AddWithValue("@ModelName", modelName);
+                    cmd.Parameters.AddWithValue("@AnnotationJson", annotationJson);
+                    con.Open();
+                    cmd.ExecuteNonQuery();
+                }
+            }
+            return Json(new { success = true });
+        }
+        public JsonResult GetAnnotations()
+        {
+            string modelName = Session["FileName"] as string;
+            string annotationJson = "";
+            using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ModelViewerDB"].ConnectionString))
+            {
+                string query = "SELECT AnnotationJson FROM ModelAnnotations WHERE ModelName=@ModelName";
+                using (SqlCommand cmd = new SqlCommand(query, con))
+                {
+                    cmd.Parameters.AddWithValue("@ModelName", modelName);
+                    con.Open();
+                    object result = cmd.ExecuteScalar();
+                    if (result != null)
+                    {
+                        annotationJson = result.ToString();
+                    }
+                }
+            }
+            return Json(annotationJson, JsonRequestBehavior.AllowGet);
         }
         public JsonResult GetMotorData()
         {

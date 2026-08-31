@@ -1,35 +1,37 @@
-﻿import * as THREE from './three.module.js';
-import { GLTFLoader } from './examples/jsm/loaders/GLTFLoader.js';
-import { OrbitControls } from './examples/jsm/controls/OrbitControls.js';
-import { OBJLoader } from './examples/jsm/loaders/OBJLoader.js';
-import { MTLLoader } from './examples/jsm/loaders/MTLLoader.js';
-import { FBXLoader } from './examples/jsm/loaders/FBXLoader.js';
-import { STLLoader } from './examples/jsm/loaders/STLLoader.js';
-import { PLYLoader } from './examples/jsm/loaders/PLYLoader.js';
-import { ColladaLoader } from './examples/jsm/loaders/ColladaLoader.js';
-var viewer = $("#viewer");
+﻿var viewer = $("#viewer");
 var scene = new THREE.Scene();
 scene.background = new THREE.Color(0x20252d);
 var camera = new THREE.PerspectiveCamera(60, viewer.width() / viewer.height(), .1, 2000);
 var renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(viewer.width(), viewer.height());
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 viewer.append(renderer.domElement);
-var controls = new OrbitControls(camera, renderer.domElement);
+var controls = new THREE.OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = .05;
 controls.minDistance = .5;
 controls.maxDistance = 1000;
-scene.add(new THREE.AmbientLight(0xffffff, 1.5));
-var light = new THREE.DirectionalLight(0xffffff, 2);
-light.position.set(5, 5, 5);
+scene.add(new THREE.AmbientLight(0xffffff, .6));
+scene.add(new THREE.HemisphereLight(0xb1caff, 0x2a2015, .5));
+var light = new THREE.DirectionalLight(0xffffff, 2.2);
+light.position.set(5, 8, 5);
+light.castShadow = true;
+light.shadow.mapSize.width = 2048;
+light.shadow.mapSize.height = 2048;
+light.shadow.camera.near = .5;
+light.shadow.camera.far = 200;
+light.shadow.bias = -.0005;
 scene.add(light);
-var light2 = new THREE.DirectionalLight(0xffffff, 1.5);
+var light2 = new THREE.DirectionalLight(0xaac4ff, .8);
 light2.position.set(-5, 3, 5);
 scene.add(light2);
-var light3 = new THREE.DirectionalLight(0xffffff, 1);
-light3.position.set(0, 5, -5);
+var light3 = new THREE.DirectionalLight(0xffe8c2, .6);
+light3.position.set(0, 2, -6);
 scene.add(light3);
 var url = viewer.attr("data-model-url");
 var fileType = viewer.attr("data-file-type");
@@ -44,6 +46,34 @@ var annotationValues = [
     { title: "FLOW RATE", value: "" },
     { title: "VIBRATION", value: "" }
 ];
+var assetLiveDataPoints = [
+    {
+        tag: "Motor.Temperature",
+        assetProperty: "Temperature"
+    },
+    {
+        tag: "Motor.Speed",
+        assetProperty: "Speed"
+    },
+    {
+        tag: "Motor.Power",
+        assetProperty: "Power"
+    },
+    {
+        tag: "Motor.FlowRate",
+        assetProperty: "FlowRate"
+    },
+    {
+        tag: "Motor.Vibration",
+        assetProperty: "Vibration"
+    }
+];
+var partsData = [];
+var partsList = null;
+var partsMeshes = [];
+var partHighlights = [];
+var renameInput = $("#partRename");
+var renamingIndex = -1;
 function updateMotorData() {
     $.ajax({
         url: "/Home/GetMotorData",
@@ -56,7 +86,9 @@ function updateMotorData() {
             annotationValues[3].value = data.FlowRate;
             annotationValues[4].value = data.Vibration;
             annotations.forEach(function (annotation, i) {
-                annotation.element.find(".annotation-property-value").text(annotationValues[i].value);
+                if (annotationValues[i]) {
+                    annotation.element.find(".annotation-property-value").text(annotationValues[i].value);
+                }
             });
         }
     });
@@ -73,46 +105,221 @@ function fitModel(object) {
     camera.updateProjectionMatrix();
     controls.target.copy(center);
     controls.update();
+    light.position.set(center.x + maxSize, center.y + maxSize * 1.5, center.z + maxSize);
+    light.shadow.camera.left = -maxSize;
+    light.shadow.camera.right = maxSize;
+    light.shadow.camera.top = maxSize;
+    light.shadow.camera.bottom = -maxSize;
+    light.shadow.camera.far = maxSize * 10;
+    light.shadow.camera.updateProjectionMatrix();
+    light.target.position.copy(center);
+    scene.add(light.target);
 }
 function addModel(object) {
     if (currentModel) scene.remove(currentModel);
     currentModel = object;
+    object.traverse(function (child) {
+        if (!child.isMesh) return;
+        child.castShadow = true;
+        child.receiveShadow = true;
+        if (child.material && child.material.map) {
+            child.material.map.encoding = THREE.sRGBEncoding;
+        }
+    });
     scene.add(object);
     fitModel(object);
     createAnnotations();
+    loadParts();
+}
+function loadParts() {
+    partsData = [];
+    partsMeshes = [];
+    partHighlights = [];
+    if (!currentModel) return;
+    currentModel.traverse(function (child) {
+        if (!child.isMesh) return;
+        var partName = child.name;
+        if (!partName || partName === "undefined" || partName === "null") {
+            partName = "Unnamed Part";
+        }
+        partsData.push({
+            id: partsData.length,
+            text: partName,
+            checked: false
+        });
+        partsMeshes.push(child);
+    });
+    if ($("#partsList").data("kendoListView")) {
+        $("#partsList").data("kendoListView").destroy();
+        $("#partsList").empty();
+    }
+    partsList = $("#partsList").kendoListView({
+        dataSource: partsData,
+        template: kendo.template($("#partTemplate").html()),
+        dataBound: function () {
+            $("#partsList .part-check").each(function () {
+                if (!$(this).data("kendoCheckBox")) {
+                    $(this).kendoCheckBox();
+                }
+            });
+        }
+    }).data("kendoListView");
+    $("#partsList").off("change.partCheck").on("change.partCheck", ".part-check", function () {
+        var index = parseInt($(this).attr("data-index"), 10);
+        if (partsData[index]) {
+            partsData[index].checked = this.checked;
+        }
+        updatePartHighlight();
+    });
+    $("#partsList").off("click.partEdit").on("click.partEdit", ".part-edit", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        renamePart($(this));
+    });
+}
+function renamePart(button) {
+    if (!partsList) return;
+    var index = parseInt(button.attr("data-index"), 10);
+    if (isNaN(index) || !partsMeshes[index]) return;
+    var item = partsList.dataSource.data()[index];
+    if (!item) return;
+    var textSpan = button.siblings(".part-name");
+    var spanPos = textSpan.offset();
+    var panelPos = $("#partsPanel").offset();
+    renamingIndex = index;
+    renameInput.val(item.text);
+    renameInput.css({
+        left: (spanPos.left - panelPos.left) + "px",
+        top: (spanPos.top - panelPos.top) + "px",
+        width: textSpan.outerWidth() + "px"
+    });
+    renameInput.show().trigger("focus").select();
+}
+function commitRename() {
+    if (renamingIndex < 0) return;
+    var index = renamingIndex;
+    renamingIndex = -1;
+    renameInput.hide();
+    var newName = $.trim(renameInput.val());
+    if (newName === "") return;
+    var item = partsList.dataSource.data()[index];
+    if (item) item.set("text", newName);
+    if (partsMeshes[index]) partsMeshes[index].name = newName;
+}
+function cancelRename() {
+    renamingIndex = -1;
+    renameInput.hide();
+}
+renameInput.on("keydown", function (e) {
+    if (e.which === 13) commitRename();
+    else if (e.which === 27) cancelRename();
+});
+renameInput.on("blur", function () {
+    commitRename();
+});
+function updatePartHighlight() {
+    if (!partsList || !partsMeshes.length) return;
+    partsMeshes.forEach(function (mesh, index) {
+        var item = partsData[index];
+        if (!item) return;
+        if (item.checked) {
+            if (!partHighlights[index]) {
+                var edges = new THREE.EdgesGeometry(mesh.geometry, 15);
+                var material = new THREE.LineDashedMaterial({
+                    color: 0xffff00,
+                    dashSize: .025,
+                    gapSize: .015,
+                    transparent: true,
+                    opacity: 1,
+                    depthTest: false
+                });
+                var line = new THREE.LineSegments(edges, material);
+                line.computeLineDistances();
+                line.renderOrder = 1000;
+                mesh.add(line);
+                partHighlights[index] = line;
+            }
+        } else {
+            if (partHighlights[index]) {
+                mesh.remove(partHighlights[index]);
+                partHighlights[index].geometry.dispose();
+                partHighlights[index].material.dispose();
+                partHighlights[index] = null;
+            }
+        }
+    });
 }
 function getPoints() {
     var vertices = [];
+    if (!currentModel) return [];
+    currentModel.updateMatrixWorld(true);
     currentModel.traverse(function (child) {
         if (!child.isMesh || !child.geometry) return;
         var position = child.geometry.attributes.position;
         if (!position) return;
-        var step = Math.max(1, Math.floor(position.count / 800));
+        var step = Math.max(1, Math.floor(position.count / 1000));
         for (var i = 0; i < position.count; i += step) {
             vertices.push(new THREE.Vector3().fromBufferAttribute(position, i).applyMatrix4(child.matrixWorld));
         }
     });
     if (!vertices.length) return [];
-    var center = new THREE.Vector3();
-    vertices.forEach(function (vertex) {
-        center.add(vertex);
-    });
-    center.divideScalar(vertices.length);
-    var maxDistance = 0;
-    vertices.forEach(function (vertex) {
-        maxDistance = Math.max(maxDistance, vertex.distanceTo(center));
-    });
-    var minimumDistance = maxDistance * .15;
+    var box = new THREE.Box3().setFromObject(currentModel);
+    var center = box.getCenter(new THREE.Vector3());
     var selected = [];
-    var attempts = 0;
-    while (selected.length < 5 && attempts < 1000) {
-        attempts++;
-        var point = vertices[Math.floor(Math.random() * vertices.length)];
-        var tooClose = selected.some(function (selectedPoint) {
-            return selectedPoint.distanceTo(point) < minimumDistance;
+    var first = vertices[0];
+    var firstDistance = first.distanceTo(center);
+    vertices.forEach(function (vertex) {
+        var distance = vertex.distanceTo(center);
+        if (distance < firstDistance) {
+            first = vertex;
+            firstDistance = distance;
+        }
+    });
+    selected.push(first.clone());
+    while (selected.length < assetLiveDataPoints.length && selected.length < vertices.length) {
+        var bestVertex = null;
+        var bestDistance = -1;
+        vertices.forEach(function (vertex) {
+            var nearest = Infinity;
+            selected.forEach(function (point) {
+                nearest = Math.min(nearest, vertex.distanceTo(point));
+            });
+            if (nearest > bestDistance) {
+                bestDistance = nearest;
+                bestVertex = vertex;
+            }
         });
-        if (!tooClose) selected.push(point.clone());
+        if (!bestVertex) break;
+        selected.push(bestVertex.clone());
     }
+    for (var i = 0; i < assetLiveDataPoints.length; i++) {
+        var point = selected[i % selected.length];
+        assetLiveDataPoints[i].position = {
+            x: Number(point.x.toFixed(3)),
+            y: Number(point.y.toFixed(3)),
+            z: Number(point.z.toFixed(3))
+        };
+        vertices[i] = point.clone();
+    }
+    var annotationJson = JSON.stringify(assetLiveDataPoints);
+    var modelName = url ? url.substring(url.lastIndexOf("/") + 1) : "";
+    if (modelName) {
+        $.ajax({
+            url: "/Home/SaveAnnotations",
+            type: "POST",
+            data: {
+                modelName: modelName,
+                annotationJson: annotationJson
+            },
+            success: function () {
+                console.log("Annotations saved to DB");
+            },
+            error: function (xhr) {
+                console.log("Save failed:", xhr.responseText);
+            }
+        });
+    }
+    console.log(annotationJson);
     return selected;
 }
 function createAnnotation(point, data) {
@@ -129,7 +336,12 @@ function createAnnotations() {
     annotationLayer.children().not("#annotationTemplate").remove();
     var points = getPoints();
     for (var i = 0; i < points.length; i++) {
-        createAnnotation(points[i], annotationValues[i]);
+        var data = assetLiveDataPoints[i];
+        var value = annotationValues[i] ? annotationValues[i].value : "";
+        createAnnotation(points[i], {
+            title: data.assetProperty.toUpperCase(),
+            value: value
+        });
     }
     updateAnnotations();
     updateMotorData();
@@ -220,12 +432,12 @@ function resizeViewer() {
 function loadModel() {
     if (!url || !fileType) return;
     if (fileType === ".gltf" || fileType === ".glb") {
-        new GLTFLoader().load(url, function (data) {
+        new THREE.GLTFLoader().load(url, function (data) {
             addModel(data.scene);
         });
     } else if (fileType === ".obj") {
-        var objLoader = new OBJLoader();
-        var mtlLoader = new MTLLoader();
+        var objLoader = new THREE.OBJLoader();
+        var mtlLoader = new THREE.MTLLoader();
         $.ajax({
             url: url,
             type: "GET",
@@ -257,21 +469,21 @@ function loadModel() {
             }
         });
     } else if (fileType === ".fbx") {
-        new FBXLoader().load(url, function (object) {
+        new THREE.FBXLoader().load(url, function (object) {
             addModel(object);
         });
     } else if (fileType === ".stl") {
-        new STLLoader().load(url, function (geometry) {
+        new THREE.STLLoader().load(url, function (geometry) {
             geometry.computeVertexNormals();
-            addModel(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: .2, roughness: .7 })));
+            addModel(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: .2, roughness: .55 })));
         });
     } else if (fileType === ".ply") {
-        new PLYLoader().load(url, function (geometry) {
+        new THREE.PLYLoader().load(url, function (geometry) {
             geometry.computeVertexNormals();
-            addModel(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: .2, roughness: .7 })));
+            addModel(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: .2, roughness: .55 })));
         });
     } else if (fileType === ".dae") {
-        new ColladaLoader().load(url, function (data) {
+        new THREE.ColladaLoader().load(url, function (data) {
             addModel(data.scene);
         });
     }
@@ -298,9 +510,13 @@ function uploadFiles(files, isFolder) {
     }
     $("#fileName").text(files.length + " Files Selected");
     var formData = new FormData();
+    var selectedModelName = "";
     $.each(files, function (i, file) {
         formData.append("files", file);
         formData.append("filePaths", isFolder ? (file.webkitRelativePath || file.name) : file.name);
+        if (!selectedModelName && /\.(gltf|glb|obj|fbx|stl|ply|dae)$/i.test(file.name)) {
+            selectedModelName = file.name;
+        }
     });
     $.ajax({
         url: "/Home/Upload",
@@ -310,13 +526,33 @@ function uploadFiles(files, isFolder) {
         contentType: false,
         success: function (response) {
             if (response.success) {
-                window.location.href = "/Home/Index";
+                $.ajax({
+                    url: "/Home/GetAnnotations",
+                    type: "GET",
+                    data: {
+                        modelName: selectedModelName
+                    },
+                    success: function (data) {
+                        if (data.annotationJson) {
+                            assetLiveDataPoints = JSON.parse(data.annotationJson);
+                            console.log("Annotations loaded from DB");
+                        }
+                        window.location.href = "/Home/Index";
+                    },
+                    error: function (xhr) {
+                        console.log("Load failed:", xhr.responseText);
+                        window.location.href = "/Home/Index";
+                    }
+                });
             } else {
                 alert(response.message);
             }
         }
     });
 }
+$("#partsButton").on("click", function () {
+    $("#partsPanel").toggle();
+});
 $("#resetView").on("click", function () {
     if (!currentModel) return;
     fitModel(currentModel);

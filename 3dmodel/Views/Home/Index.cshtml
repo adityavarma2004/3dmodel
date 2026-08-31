@@ -6,8 +6,9 @@
         height: 1px;
         background: white;
         transform-origin: 0 0;
-        pointer-events: none;
+        pointer-events: none
     }
+
     .annotation {
         position: absolute;
         padding: 7px 10px;
@@ -16,18 +17,61 @@
         border-radius: 5px;
         color: white;
         font-size: 11px;
-        pointer-events: none;
+        pointer-events: none
     }
+
     .annotation-title {
         margin: 0 0 2px;
         font-size: 11px;
-        font-weight: 600;
+        font-weight: 600
     }
+
     .annotation-property-value {
         color: lightskyblue;
         font-size: 13px;
-        font-weight: 500;
-    }}
+        font-weight: 500
+    }
+
+    #partsList .part-row {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        min-height: 36px;
+        padding: 6px 10px;
+        box-sizing: border-box;
+        border-bottom: 1px solid #eee
+    }
+
+    #partsList .part-check {
+        flex-shrink: 0;
+        margin-right: 8px
+    }
+
+    .part-name {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0
+    }
+
+    .part-edit {
+        flex-shrink: 0;
+        margin-left: 8px;
+        font-size: 14px;
+        line-height: 1
+    }
+
+    #partRename {
+        border: 1px solid #0078d4;
+        border-radius: 3px;
+        padding: 4px 6px;
+        box-sizing: border-box;
+        outline: none;
+        font-size: 14px;
+        background: white;
+        color: black
+    }
 </style>
 <div style="min-height:100vh;margin:0;background:whitesmoke;font-family:Arial,sans-serif">
     <div style="height:64px;background:white;border-bottom:1px solid lightgray;display:flex;align-items:center;padding:0 24px;box-sizing:border-box">
@@ -42,7 +86,9 @@
                 <div class="k-card-body">
                     <div style="text-align:center;padding:18px 8px">
                         <div style="font-size:42px;margin-bottom:12px">&#128193;</div>
-                        <p style="margin:0 0 16px;color:gray;font-size:14px;line-height:1.5">Select the folder containing your 3D model and related files.</p>
+                        <p style="margin:0 0 16px;color:gray;font-size:14px;line-height:1.5">
+                            Select the folder containing your 3D model and related files.
+                        </p>
                         <div style="display:flex;justify-content:center;gap:10px">
                             <button type="button" id="chooseFolder" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
                                 <span class="k-button-text">Choose Folder</span>
@@ -59,14 +105,22 @@
                 </div>
             </div>
         </div>
-        <div class="k-card" style="flex:1;min-width:0;overflow:hidden">
-            <div style="height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 14px 0 18px;box-sizing:border-box;border-bottom:1px solid lightgray;background:white">
+        <div class="k-card" style="flex:1;min-width:0;overflow:hidden;position:relative">
+            <div style="height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 14px 0 18px;box-sizing:border-box;border-bottom:1px solid lightgray;background:white;position:relative;z-index:30">
                 <h2 class="k-card-title">3D Model Viewer</h2>
-                <button type="button" id="resetView" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
-                    <span class="k-button-text">Reset View</span>
-                </button>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <button type="button" id="partsButton" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
+                        <span class="k-button-text">Parts</span>
+                    </button>
+                    <button type="button" id="resetView" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
+                        <span class="k-button-text">Reset View</span>
+                    </button>
+                </div>
             </div>
-            <div id="viewer" data-model-url="@(Model.FileUrl != null ? Url.Content(Model.FileUrl) : "")" data-file-type="@Model.Extension" style="position:relative;height:calc(100vh - 158px);min-height:500px;overflow:hidden;background:darkslategray">
+            <div id="viewer"
+                 data-model-url="@(Model.FileUrl != null ? Url.Content(Model.FileUrl) : "")"
+                 data-file-type="@Model.Extension"
+                 style="position:relative;height:calc(100vh - 158px);min-height:500px;overflow:hidden;background:darkslategray">
                 <div id="annotationLayer" style="position:absolute;left:0;top:0;width:100%;height:100%;z-index:11;pointer-events:none">
                     <div id="annotationTemplate" style="display:none">
                         <div class="annotation-line"></div>
@@ -77,16 +131,34 @@
                     </div>
                 </div>
             </div>
+            <div id="partsPanel" style="display:none;position:absolute;top:58px;right:0;width:260px;height:calc(100% - 58px);background:white;border-left:1px solid lightgray;z-index:20;box-sizing:border-box">
+                <div style="height:58px;display:flex;align-items:center;padding:0 16px;box-sizing:border-box;border-bottom:1px solid lightgray">
+                    <h3 style="margin:0;font-size:16px;font-weight:600;color:black">Parts</h3>
+                </div>
+                <div id="partsList" style="height:calc(100% - 58px);overflow:auto"></div>
+                <input id="partRename" type="text" style="display:none;position:absolute;z-index:50" />
+            </div>
         </div>
     </div>
 </div>
+
+<script type="text/x-kendo-template" id="partTemplate">
+    <div class="part-row">
+        <input type="checkbox" class="part-check" data-index="#: id #" />
+        <span class="part-name" title="#: text #">#: text #</span>
+        <button type="button" class="k-button k-button-md k-button-flat k-button-flat-base k-icon-button part-edit" data-index="#: id #" title="Rename Part">✎</button>
+    </div>
+</script>
+
 <script src="~/Scripts/jquery-3.7.0.js"></script>
 <script src="https://kendo.cdn.telerik.com/2025.3.812/js/kendo.all.min.js"></script>
-<script type="importmap">
-    {
-        "imports": {
-            "three": "/Scripts/three.module.js"
-        }
-    }
-</script>
-<script type="module" src="~/Scripts/modelViewer.js"></script>
+<script src="~/Scripts/three.min.js"></script>
+<script src="~/Scripts/OrbitControls.js"></script>
+<script src="~/Scripts/GLTFLoader.js"></script>
+<script src="~/Scripts/OBJLoader.js"></script>
+<script src="~/Scripts/MTLLoader.js"></script>
+<script src="~/Scripts/FBXLoader.js"></script>
+<script src="~/Scripts/STLLoader.js"></script>
+<script src="~/Scripts/PLYLoader.js"></script>
+<script src="~/Scripts/ColladaLoader.js"></script>
+<script src="~/Scripts/modelViewer.js"></script>
