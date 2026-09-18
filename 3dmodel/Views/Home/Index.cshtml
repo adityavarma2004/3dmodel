@@ -62,15 +62,45 @@
         line-height: 1
     }
 
-    #partRename {
-        border: 1px solid #0078d4;
-        border-radius: 3px;
-        padding: 4px 6px;
+    #propertiesList .property-row {
+        display: flex;
+        width: 100%;
+        min-height: 42px;
+        padding: 8px 10px;
         box-sizing: border-box;
-        outline: none;
+        border-bottom: 1px solid #eee;
+        align-items: center
+    }
+
+    #propertiesList .property-tag {
+        flex: 1;
         font-size: 14px;
+        font-weight: 600;
+        color: black;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap
+    }
+
+    #partsPanel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 300px;
+        height: 100%;
         background: white;
-        color: black
+        z-index: 20;
+        box-sizing: border-box;
+        border-left: 1px solid lightgray;
+        box-shadow: -3px 0 8px rgba(0,0,0,0.15)
+    }
+
+    #existingPartsList .existing-part-row {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        min-height: 32px;
+        padding: 4px 0
     }
 </style>
 <div style="min-height:100vh;margin:0;background:whitesmoke;font-family:Arial,sans-serif">
@@ -107,8 +137,16 @@
         </div>
         <div class="k-card" style="flex:1;min-width:0;overflow:hidden;position:relative">
             <div style="height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 14px 0 18px;box-sizing:border-box;border-bottom:1px solid lightgray;background:white;position:relative;z-index:30">
-                <h2 class="k-card-title">3D Model Viewer</h2>
                 <div style="display:flex;align-items:center;gap:8px">
+                    <h2 id="viewerTitle" class="k-card-title" style="margin:0">3D Model Viewer</h2>
+                    <button type="button" id="modelViewToggle" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
+                        <span class="k-button-text">2D</span>
+                    </button>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <button type="button" id="propertiesButton" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
+                        <span class="k-button-text">Properties</span>
+                    </button>
                     <button type="button" id="partsButton" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
                         <span class="k-button-text">Parts</span>
                     </button>
@@ -117,10 +155,7 @@
                     </button>
                 </div>
             </div>
-            <div id="viewer"
-                 data-model-url="@(Model.FileUrl != null ? Url.Content(Model.FileUrl) : "")"
-                 data-file-type="@Model.Extension"
-                 style="position:relative;height:calc(100vh - 158px);min-height:500px;overflow:hidden;background:darkslategray">
+            <div id="viewer" data-model-url="@(Model.FileUrl != null ? Url.Content(Model.FileUrl) : "")" data-file-type="@Model.Extension" style="position:relative;height:calc(100vh - 158px);min-height:500px;overflow:hidden;background:darkslategray">
                 <div id="annotationLayer" style="position:absolute;left:0;top:0;width:100%;height:100%;z-index:11;pointer-events:none">
                     <div id="annotationTemplate" style="display:none">
                         <div class="annotation-line"></div>
@@ -130,26 +165,153 @@
                         </div>
                     </div>
                 </div>
-            </div>
-            <div id="partsPanel" style="display:none;position:absolute;top:58px;right:0;width:260px;height:calc(100% - 58px);background:white;border-left:1px solid lightgray;z-index:20;box-sizing:border-box">
-                <div style="height:58px;display:flex;align-items:center;padding:0 16px;box-sizing:border-box;border-bottom:1px solid lightgray">
-                    <h3 style="margin:0;font-size:16px;font-weight:600;color:black">Parts</h3>
+                <div id="partsPanel">
+                    <div id="propertiesView" style="display:none;height:100%;box-sizing:border-box;background:white">
+                        <div style="height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 10px 0 16px;box-sizing:border-box;border-bottom:1px solid lightgray">
+                            <h3 style="margin:0;font-size:16px;font-weight:600;color:black">Properties</h3>
+                            <button type="button" id="addLabelButton" class="k-button k-button-sm k-rounded-md k-button-solid k-button-solid-primary" style="width:32px;height:32px;padding:0;font-size:20px;line-height:1" title="Add Label">
+                                <span class="k-button-text">+</span>
+                            </button>
+                        </div>
+                        <div id="propertiesList" style="height:calc(100% - 58px);overflow:auto"></div>
+                    </div>
+                    <div id="propertyAddView" style="display:none;height:100%;box-sizing:border-box;background:white">
+                        <div style="height:58px;display:flex;align-items:center;padding:0 16px;box-sizing:border-box;border-bottom:1px solid lightgray">
+                            <h3 style="margin:0;font-size:16px;font-weight:600;color:black">Add Property</h3>
+                        </div>
+                        <div style="height:calc(100% - 58px);padding:20px;box-sizing:border-box;overflow:auto">
+                            <div style="margin-bottom:18px">
+                                <label style="display:block;margin-bottom:7px;font-size:13px;font-weight:600;color:black">Property</label>
+                                <input id="propertyAddDropdown" />
+                            </div>
+                        </div>
+                    </div>
+                    <div id="partsView" style="height:100%;box-sizing:border-box;background:white">
+                        <div style="height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 10px 0 16px;box-sizing:border-box;border-bottom:1px solid lightgray">
+                            <h3 style="margin:0;font-size:16px;font-weight:600;color:black">Parts</h3>
+                            <button type="button" id="addPartButton" class="k-button k-button-sm k-rounded-md k-button-solid k-button-solid-primary" style="width:32px;height:32px;padding:0;font-size:20px;line-height:1" title="Add Part">
+                                <span class="k-button-text">+</span>
+                            </button>
+                        </div>
+                        <div id="partsList" style="height:calc(100% - 58px);overflow:auto"></div>
+                    </div>
+                    <div id="partEditView" style="display:none;height:100%;box-sizing:border-box;background:white">
+                        <div style="height:58px;display:flex;align-items:center;padding:0 16px;box-sizing:border-box;border-bottom:1px solid lightgray">
+                            <h3 style="margin:0;font-size:16px;font-weight:600;color:black">Edit Part</h3>
+                        </div>
+                        <div style="height:calc(100% - 58px);padding:20px;box-sizing:border-box;overflow:auto">
+                            <div style="display:flex;align-items:flex-end;gap:10px;margin-bottom:18px">
+                                <div style="flex-shrink:0">
+                                    <label style="display:block;margin-bottom:7px;font-size:13px;font-weight:600;color:black">Markup Color</label>
+                                    <input id="partColorEdit" />
+                                </div>
+                                <div style="flex:1;min-width:0">
+                                    <label style="display:block;margin-bottom:7px;font-size:13px;font-weight:600;color:black">Rename</label>
+                                    <input id="partRenameEdit" />
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:8px;margin-top:24px">
+                                <button type="button" id="savePartEdit" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
+                                    <span class="k-button-text">Save</span>
+                                </button>
+                                <button type="button" id="cancelPartEdit" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-base">
+                                    <span class="k-button-text">Cancel</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="partCreateView" style="display:none;height:100%;box-sizing:border-box;background:white">
+                        <div style="height:58px;display:flex;align-items:center;padding:0 16px;box-sizing:border-box;border-bottom:1px solid lightgray">
+                            <h3 style="margin:0;font-size:16px;font-weight:600;color:black">Add Part</h3>
+                        </div>
+                        <div style="height:calc(100% - 58px);padding:20px;box-sizing:border-box;overflow:auto">
+                            <div style="margin-bottom:18px">
+                                <label style="display:block;margin-bottom:7px;font-size:13px;font-weight:600;color:black">Part Name</label>
+                                <input id="newPartName" />
+                            </div>
+                            <div style="margin-bottom:18px">
+                                <label style="display:block;margin-bottom:7px;font-size:13px;font-weight:600;color:black">Source</label>
+                                <input id="partSourceType" />
+                            </div>
+                            <div id="partModelFields">
+                                <div style="padding:12px;background:#f5f5f5;border:1px solid #ddd;font-size:12px;color:#555;line-height:1.5">
+                                    Hold Shift and drag over the model to select the part.
+                                </div>
+                                <div style="margin-top:16px;font-size:12px;color:gray">
+                                    <div id="partPoint1">Freehand selection active</div>
+                                    <div id="partPoint2" style="margin-top:6px">Selected surface triangles: 0</div>
+                                </div>
+                            </div>
+                            <div id="partExistingFields" style="display:none">
+                                <div style="margin-bottom:8px;font-size:13px;font-weight:600;color:black">Select Parts</div>
+                                <div id="existingPartsList" style="max-height:220px;overflow:auto"></div>
+                            </div>
+                            <div style="display:flex;gap:8px;margin-top:24px">
+                                <button type="button" id="saveNewPart" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
+                                    <span class="k-button-text">Save</span>
+                                </button>
+                                <button type="button" id="cancelNewPart" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-base">
+                                    <span class="k-button-text">Cancel</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="propertyEditView" style="display:none;height:100%;box-sizing:border-box;background:white">
+                        <div style="height:58px;display:flex;align-items:center;padding:0 16px;box-sizing:border-box;border-bottom:1px solid lightgray">
+                            <h3 style="margin:0;font-size:16px;font-weight:600;color:black">Edit Property</h3>
+                        </div>
+                        <div style="height:calc(100% - 58px);padding:20px;box-sizing:border-box;overflow:auto">
+                            <div style="margin-bottom:18px">
+                                <label style="display:block;margin-bottom:7px;font-size:13px;font-weight:600;color:black">Rename</label>
+                                <input id="propertyRenameEdit" />
+                            </div>
+                            <div style="margin-bottom:18px">
+                                <label style="display:block;margin-bottom:7px;font-size:13px;font-weight:600;color:black">Position Type</label>
+                                <input id="propertyPositionType" />
+                            </div>
+                            <div id="propertyXYZFields" style="display:none">
+                                <div style="margin-bottom:12px">
+                                    <label style="display:block;margin-bottom:5px;font-size:13px;font-weight:600;color:black">X</label>
+                                    <input id="propertyX" />
+                                </div>
+                                <div style="margin-bottom:12px">
+                                    <label style="display:block;margin-bottom:5px;font-size:13px;font-weight:600;color:black">Y</label>
+                                    <input id="propertyY" />
+                                </div>
+                                <div style="margin-bottom:12px">
+                                    <label style="display:block;margin-bottom:5px;font-size:13px;font-weight:600;color:black">Z</label>
+                                    <input id="propertyZ" />
+                                </div>
+                            </div>
+                            <div id="propertyNameField" style="display:none;margin-bottom:18px">
+                                <label style="display:block;margin-bottom:7px;font-size:13px;font-weight:600;color:black">Position</label>
+                                <input id="propertyPositionName" />
+                            </div>
+                            <div id="propertyClickMessage" style="display:none;margin-bottom:18px;padding:10px;background:#f5f5f5;border:1px solid #ddd;font-size:12px;color:#555">
+                                Click a point on the 3D model to set the property position.
+                            </div>
+                            <div style="display:flex;gap:8px;margin-top:24px">
+                                <button type="button" id="savePropertyEdit" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-primary">
+                                    <span class="k-button-text">Save</span>
+                                </button>
+                                <button type="button" id="cancelPropertyEdit" class="k-button k-button-md k-rounded-md k-button-solid k-button-solid-base">
+                                    <span class="k-button-text">Cancel</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div id="partsList" style="height:calc(100% - 58px);overflow:auto"></div>
-                <input id="partRename" type="text" style="display:none;position:absolute;z-index:50" />
             </div>
         </div>
     </div>
 </div>
-
 <script type="text/x-kendo-template" id="partTemplate">
     <div class="part-row">
-        <input type="checkbox" class="part-check" data-index="#: id #" />
+        <input type="checkbox" class="part-check k-checkbox k-checkbox-md k-rounded-md" data-index="#: id #" />
         <span class="part-name" title="#: text #">#: text #</span>
-        <button type="button" class="k-button k-button-md k-button-flat k-button-flat-base k-icon-button part-edit" data-index="#: id #" title="Rename Part">✎</button>
+        <button type="button" class="k-button k-button-md k-button-flat k-button-flat-base k-icon-button part-edit" data-index="#: id #" title="Edit Part">✎</button>
     </div>
 </script>
-
 <script src="~/Scripts/jquery-3.7.0.js"></script>
 <script src="https://kendo.cdn.telerik.com/2025.3.812/js/kendo.all.min.js"></script>
 <script src="~/Scripts/three.min.js"></script>
@@ -162,3 +324,5 @@
 <script src="~/Scripts/PLYLoader.js"></script>
 <script src="~/Scripts/ColladaLoader.js"></script>
 <script src="~/Scripts/modelViewer.js"></script>
+<script src="~/Scripts/script2.js"></script>
+<script src="~/Scripts/script3.js"></script>

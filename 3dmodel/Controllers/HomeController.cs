@@ -1,12 +1,14 @@
-﻿using Newtonsoft.Json;
+﻿using _3dmodel.Models;
+using Newtonsoft.Json;
+using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
-using System.Configuration;
-using System.Data.SqlClient;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Web;
 using System.Web.Mvc;
-using _3dmodel.Models;
 namespace _3dmodel.Controllers
 {
     public class HomeController : Controller
@@ -93,38 +95,187 @@ namespace _3dmodel.Controllers
         public JsonResult SaveAnnotations(string annotationJson)
         {
             string modelName = Session["FileName"] as string;
-            using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ModelViewerDB"].ConnectionString))
-            {
-                string query = "IF EXISTS (SELECT 1 FROM ModelAnnotations WHERE ModelName=@ModelName) UPDATE ModelAnnotations SET AnnotationJson=@AnnotationJson WHERE ModelName=@ModelName ELSE INSERT INTO ModelAnnotations (ModelName, AnnotationJson) VALUES (@ModelName, @AnnotationJson)";
-                using (SqlCommand cmd = new SqlCommand(query, con))
-                {
-                    cmd.Parameters.AddWithValue("@ModelName", modelName);
-                    cmd.Parameters.AddWithValue("@AnnotationJson", annotationJson);
-                    con.Open();
-                    cmd.ExecuteNonQuery();
-                }
-            }
-            return Json(new { success = true });
+            AssetModel model = new AssetModel(modelName);
+            bool success = model.SaveAnnotations(annotationJson);
+            return Json(new { success = success });
         }
         public JsonResult GetAnnotations()
         {
             string modelName = Session["FileName"] as string;
-            string annotationJson = "";
-            using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ModelViewerDB"].ConnectionString))
-            {
-                string query = "SELECT AnnotationJson FROM ModelAnnotations WHERE ModelName=@ModelName";
-                using (SqlCommand cmd = new SqlCommand(query, con))
-                {
-                    cmd.Parameters.AddWithValue("@ModelName", modelName);
-                    con.Open();
-                    object result = cmd.ExecuteScalar();
-                    if (result != null)
-                    {
-                        annotationJson = result.ToString();
-                    }
-                }
-            }
+            AssetModel model = new AssetModel(modelName);
+            string annotationJson = model.Get();
             return Json(annotationJson, JsonRequestBehavior.AllowGet);
+        }
+        [HttpPost]
+        public JsonResult UploadModelImage(HttpPostedFileBase image)
+        {
+            if (image == null || image.ContentLength == 0)
+            {
+                return Json(new { success = false });
+            }
+            string imagePath = Server.MapPath("~/Uploads/Image/");
+            if (!Directory.Exists(imagePath))
+            {
+                Directory.CreateDirectory(imagePath);
+            }
+            string fileName = Path.GetFileName(image.FileName);
+            string filePath = Path.Combine(imagePath, fileName);
+            image.SaveAs(filePath);
+            string modelName = Session["FileName"] as string;
+            AssetModel model = new AssetModel(modelName);
+            bool success = model.SaveImage(fileName);
+            return Json(new
+            {
+                success = success,
+                imageName = fileName
+            });
+        }
+        [HttpPost]
+        public JsonResult SaveModelImage(string imageName)
+        {
+            string modelName = Session["FileName"] as string;
+            AssetModel model = new AssetModel(modelName);
+            bool success = model.SaveImage(imageName);
+            return Json(new { success = success });
+        }
+        public JsonResult GetModelImage()
+        {
+            string modelName = Session["FileName"] as string;
+            AssetModel model = new AssetModel(modelName);
+            string imageName = model.GetImage();
+            return Json(imageName, JsonRequestBehavior.AllowGet);
+        }
+        [HttpPost]
+        public JsonResult UploadModelImage(HttpPostedFileBase image)
+        {
+            try
+            {
+                if (image == null || image.ContentLength == 0)
+                    return Json(new { success = false, message = "No image selected." });
+
+                string folder = Server.MapPath("~/Uploads/Image/");
+
+                if (!Directory.Exists(folder))
+                    Directory.CreateDirectory(folder);
+
+                foreach (string file in Directory.GetFiles(folder))
+                    System.IO.File.Delete(file);
+
+                string extension = Path.GetExtension(image.FileName);
+
+                string fileName = Guid.NewGuid().ToString("N") + extension;
+
+                image.SaveAs(Path.Combine(folder, fileName));
+
+                Session["ModelImage"] = fileName;
+
+                return Json(new
+                {
+                    success = true,
+                    fileName = fileName
+                });
+            }
+            catch (Exception ex)
+            {
+                return Json(new
+                {
+                    success = false,
+                    message = ex.Message
+                });
+            }
+        }
+
+        [HttpGet]
+        public JsonResult GetModelImage()
+        {
+            return Json(
+                Session["ModelImage"] as string,
+                JsonRequestBehavior.AllowGet);
+        }
+
+        [HttpPost]
+        public JsonResult SegmentImage()
+        {
+            try
+            {
+                string fileName = Session["ModelImage"] as string;
+
+                if (string.IsNullOrWhiteSpace(fileName))
+                    return Json(new { success = false, message = "No 2D image uploaded." });
+
+                string path = Path.Combine(
+                    Server.MapPath("~/Uploads/Image/"),
+                    fileName);
+
+                if (!System.IO.File.Exists(path))
+                    return Json(new { success = false, message = "Image file not found." });
+
+                ImageSegmentationResult result =
+                    ImageSegmentation.Process(path, 1200, 18f, 250);
+
+                Session["ImageSegments"] = JsonConvert.SerializeObject(result);
+
+                return Json(new
+                {
+                    success = true,
+                    width = result.Width,
+                    height = result.Height,
+                    labelMap = result.LabelMap,
+                    preview = result.Preview,
+                    segments = result.Segments
+                });
+            }
+            catch (Exception ex)
+            {
+                return Json(new
+                {
+                    success = false,
+                    message = ex.Message
+                });
+            }
+        }
+
+        [HttpPost]
+        public JsonResult SaveImageSegments(string segments)
+        {
+            try
+            {
+                Session["ImageSegments"] = segments;
+
+                return Json(new
+                {
+                    success = true
+                });
+            }
+            catch (Exception ex)
+            {
+                return Json(new
+                {
+                    success = false,
+                    message = ex.Message
+                });
+            }
+        }
+
+        [HttpGet]
+        public JsonResult GetImageSegments()
+        {
+            try
+            {
+                string data = Session["ImageSegments"] as string;
+
+                return Json(
+                    data,
+                    JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new
+                {
+                    success = false,
+                    message = ex.Message
+                }, JsonRequestBehavior.AllowGet);
+            }
         }
         public JsonResult GetMotorData()
         {
@@ -133,9 +284,9 @@ namespace _3dmodel.Controllers
             {
                 Temperature = (70 + random.NextDouble() * 15).ToString("0.0") + " °C",
                 Speed = (1400 + random.Next(101)) + " RPM",
-                Power = (5 + random.NextDouble() * 2).ToString("0.0") + " kW",
-                FlowRate = (110 + random.NextDouble() * 20).ToString("0.0") + " m³/h",
-                Vibration = (1.5 + random.NextDouble() * 2).ToString("0.0") + " mm/s"
+                Power = (5 + random.NextDouble() * 3).ToString("0.0") + " kW",
+                FlowRate = (20 + random.NextDouble() * 10).ToString("0.0") + " L/min",
+                Vibration = (1 + random.NextDouble() * 2).ToString("0.0") + " mm/s"
             }, JsonRequestBehavior.AllowGet);
         }
     }

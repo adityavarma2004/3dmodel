@@ -37,61 +37,55 @@ var url = viewer.attr("data-model-url");
 var fileType = viewer.attr("data-file-type");
 var currentModel = null;
 var annotations = [];
+var assetLiveDataPoints = [];
 var annotationLayer = $("#annotationLayer");
 var annotationTemplate = $("#annotationTemplate");
-var annotationValues = [
-    { title: "TEMPERATURE", value: "" },
-    { title: "SPEED", value: "" },
-    { title: "POWER", value: "" },
-    { title: "FLOW RATE", value: "" },
-    { title: "VIBRATION", value: "" }
-];
-var assetLiveDataPoints = [
-    {
-        tag: "Motor.Temperature",
-        assetProperty: "Temperature"
-    },
-    {
-        tag: "Motor.Speed",
-        assetProperty: "Speed"
-    },
-    {
-        tag: "Motor.Power",
-        assetProperty: "Power"
-    },
-    {
-        tag: "Motor.FlowRate",
-        assetProperty: "FlowRate"
-    },
-    {
-        tag: "Motor.Vibration",
-        assetProperty: "Vibration"
-    }
-];
 var partsData = [];
 var partsList = null;
 var partsMeshes = [];
 var partHighlights = [];
-var renameInput = $("#partRename");
-var renamingIndex = -1;
+var savedSectionsData = [];
+var editingIndex = -1;
+var propertyAddData = [];
 function updateMotorData() {
     $.ajax({
         url: "/Home/GetMotorData",
         type: "GET",
         dataType: "json",
         success: function (data) {
-            annotationValues[0].value = data.Temperature;
-            annotationValues[1].value = data.Speed;
-            annotationValues[2].value = data.Power;
-            annotationValues[3].value = data.FlowRate;
-            annotationValues[4].value = data.Vibration;
-            annotations.forEach(function (annotation, i) {
-                if (annotationValues[i]) {
-                    annotation.element.find(".annotation-property-value").text(annotationValues[i].value);
+            if (!data) return;
+            if (!assetLiveDataPoints.length) {
+                createLiveTags(data);
+                return;
+            }
+            annotations.forEach(function (annotation) {
+                var value = data[annotation.tag];
+                if (value !== undefined && value !== null) {
+                    annotation.element.find(".annotation-property-value").text(value);
                 }
             });
+        },
+        error: function (xhr) {
+            console.log("Live data failed:", xhr.responseText);
         }
     });
+}
+function createLiveTags(data) {
+    assetLiveDataPoints = [];
+    Object.keys(data).slice(0, 2).forEach(function (tag) {
+        var property = tag;
+        if (tag.indexOf(".") >= 0) {
+            property = tag.substring(tag.lastIndexOf(".") + 1);
+        }
+        assetLiveDataPoints.push({
+            tag: tag,
+            assetProperty: property,
+            value: data[tag],
+            position: null,
+            positionText: null
+        });
+    });
+    createAnnotations(true);
 }
 function fitModel(object) {
     var box = new THREE.Box3().setFromObject(object);
@@ -106,17 +100,13 @@ function fitModel(object) {
     controls.target.copy(center);
     controls.update();
     light.position.set(center.x + maxSize, center.y + maxSize * 1.5, center.z + maxSize);
-    light.shadow.camera.left = -maxSize;
-    light.shadow.camera.right = maxSize;
-    light.shadow.camera.top = maxSize;
-    light.shadow.camera.bottom = -maxSize;
-    light.shadow.camera.far = maxSize * 10;
-    light.shadow.camera.updateProjectionMatrix();
     light.target.position.copy(center);
     scene.add(light.target);
 }
 function addModel(object) {
-    if (currentModel) scene.remove(currentModel);
+    if (currentModel) {
+        scene.remove(currentModel);
+    }
     currentModel = object;
     object.traverse(function (child) {
         if (!child.isMesh) return;
@@ -128,26 +118,617 @@ function addModel(object) {
     });
     scene.add(object);
     fitModel(object);
-    createAnnotations();
-    loadParts();
+    loadSavedAnnotations();
+}
+function loadSavedAnnotations() {
+    $.ajax({
+        url: "/Home/GetAnnotations",
+        type: "GET",
+        dataType: "json",
+        success: function (data) {
+            assetLiveDataPoints = [];
+            savedSectionsData = [];
+            if (data && typeof data === "string" && data !== "") {
+                try {
+                    var savedData = JSON.parse(data);
+                    if (Array.isArray(savedData)) {
+                        assetLiveDataPoints = savedData;
+                    } else {
+                        assetLiveDataPoints = Array.isArray(savedData.annotations) ? savedData.annotations : [];
+                        savedSectionsData = Array.isArray(savedData.sections) ? savedData.sections : [];
+                    }
+                } catch (e) {
+                    console.log("Annotation JSON parse failed");
+                }
+            } else if (data && typeof data === "object") {
+                if (Array.isArray(data)) {
+                    assetLiveDataPoints = data;
+                } else {
+                    assetLiveDataPoints = Array.isArray(data.annotations) ? data.annotations : [];
+                    savedSectionsData = Array.isArray(data.sections) ? data.sections : [];
+                }
+            }
+            if (assetLiveDataPoints.length > 0) {
+                createAnnotations(false);
+                updateMotorData();
+            } else {
+                updateMotorData();
+            }
+            if (currentModel) {
+                loadParts();
+            }
+        },
+        error: function (xhr) {
+            console.log("Get annotations failed:", xhr.responseText);
+            updateMotorData();
+            if (currentModel) {
+                loadParts();
+            }
+        }
+    });
+}
+function getAllModelVertices() {
+    var vertices = [];
+    if (!currentModel) return vertices;
+    currentModel.updateMatrixWorld(true);
+    currentModel.traverse(function (child) {
+        if (!child.isMesh || !child.geometry) return;
+        var position = child.geometry.attributes.position;
+        if (!position) return;
+        for (var i = 0; i < position.count; i++) {
+            var vertex = new THREE.Vector3();
+            vertex.fromBufferAttribute(position, i);
+            vertex.applyMatrix4(child.matrixWorld);
+            vertices.push(vertex);
+        }
+    });
+    return vertices;
+}
+function getMainEquipmentVertices() {
+    if (!currentModel) return [];
+    currentModel.updateMatrixWorld(true);
+    var meshInfo = [];
+    currentModel.traverse(function (child) {
+        if (!child.isMesh || !child.geometry) return;
+        var position = child.geometry.attributes.position;
+        if (!position || !position.count) return;
+        var box = new THREE.Box3();
+        var vertex = new THREE.Vector3();
+        for (var i = 0; i < position.count; i++) {
+            vertex.fromBufferAttribute(position, i);
+            vertex.applyMatrix4(child.matrixWorld);
+            box.expandByPoint(vertex);
+        }
+        var size = box.getSize(new THREE.Vector3());
+        var maxSize = Math.max(size.x, size.y, size.z);
+        var minSize = Math.min(size.x, size.y, size.z);
+        meshInfo.push({
+            mesh: child,
+            position: position,
+            box: box,
+            size: size,
+            maxSize: maxSize,
+            minSize: minSize,
+            thin: maxSize > 0 && minSize / maxSize < .12,
+            count: position.count
+        });
+    });
+    if (!meshInfo.length) return [];
+    var largestSize = Math.max.apply(null, meshInfo.map(function (item) {
+        return item.maxSize;
+    }));
+    var usableMeshes = meshInfo.filter(function (item) {
+        return !(item.thin && item.maxSize > largestSize * .45);
+    });
+    if (!usableMeshes.length) {
+        usableMeshes = meshInfo;
+    }
+    var vertices = [];
+    usableMeshes.forEach(function (item) {
+        var step = Math.max(1, Math.floor(item.position.count / 10000));
+        for (var i = 0; i < item.position.count; i += step) {
+            var vertex = new THREE.Vector3();
+            vertex.fromBufferAttribute(item.position, i);
+            vertex.applyMatrix4(item.mesh.matrixWorld);
+            vertices.push(vertex);
+        }
+    });
+    return vertices;
+}
+function getModelCenter() {
+    var vertices = getMainEquipmentVertices();
+    if (!vertices.length) {
+        vertices = getAllModelVertices();
+    }
+    if (!vertices.length) return new THREE.Vector3();
+    var center = new THREE.Vector3();
+    vertices.forEach(function (vertex) {
+        center.add(vertex);
+    });
+    center.divideScalar(vertices.length);
+    return center;
+}
+function getPositionText(position, box) {
+    if (!position || !box) return "";
+    var center = getModelCenter();
+    var xSize = box.max.x - box.min.x;
+    var ySize = box.max.y - box.min.y;
+    var zSize = box.max.z - box.min.z;
+    var dx = position.x - center.x;
+    var dy = position.y - center.y;
+    var dz = position.z - center.z;
+    var result = [];
+    if (Math.abs(dy) >= ySize * .2) {
+        result.push(dy > 0 ? "Top" : "Bottom");
+    }
+    if (Math.abs(dx) >= xSize * .2) {
+        result.push(dx > 0 ? "Right" : "Left");
+    }
+    if (Math.abs(dz) >= zSize * .2) {
+        result.push(dz > 0 ? "Front" : "Back");
+    }
+    if (!result.length) {
+        result.push("Center");
+    }
+    return result.join(" ");
+}
+function getPositionPoint(positionText) {
+    if (!currentModel) return new THREE.Vector3();
+    var text = (positionText || "").toLowerCase().trim();
+    var vertices = getMainEquipmentVertices();
+    if (!vertices.length) {
+        vertices = getAllModelVertices();
+    }
+    if (!vertices.length) return new THREE.Vector3();
+    if (!text || text === "center") {
+        var center = new THREE.Vector3();
+        vertices.forEach(function (vertex) {
+            center.add(vertex);
+        });
+        center.divideScalar(vertices.length);
+        return center;
+    }
+    var bestPoint = vertices[0].clone();
+    var bestValue = -Infinity;
+    vertices.forEach(function (vertex) {
+        var value = 0;
+        if (text.indexOf("right") >= 0) value += vertex.x;
+        if (text.indexOf("left") >= 0) value -= vertex.x;
+        if (text.indexOf("top") >= 0) value += vertex.y;
+        if (text.indexOf("bottom") >= 0) value -= vertex.y;
+        if (text.indexOf("front") >= 0) value += vertex.z;
+        if (text.indexOf("back") >= 0) value -= vertex.z;
+        if (value > bestValue) {
+            bestValue = value;
+            bestPoint = vertex.clone();
+        }
+    });
+    return bestPoint;
+}
+function loadProperties() {
+    $("#propertiesList").empty();
+    if (!assetLiveDataPoints.length) {
+        $("#propertiesList").html('<div style="padding:20px;color:gray;font-size:13px">No properties available</div>');
+        return;
+    }
+    assetLiveDataPoints.forEach(function (item, index) {
+        var propertyName = item.assetProperty || item.tag || "";
+        var row = $(
+            '<div class="property-row" data-index="' + index + '" style="display:flex;align-items:center;min-height:44px;border-bottom:1px solid #e5e5e5;padding:0 10px;box-sizing:border-box">' +
+            '<div class="property-tag" title="' + propertyName + '" style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:14px">' + propertyName + '</div>' +
+            '<button type="button" class="k-button k-button-md k-button-flat k-button-flat-base property-edit" data-index="' + index + '" title="Edit" style="border:0;background:transparent;padding:5px;min-width:30px">✎</button>' +
+            '</div>'
+        );
+        $("#propertiesList").append(row);
+    });
+}
+function loadPropertyAddOptions() {
+    var dropdown = $("#propertyAddDropdown").data("kendoDropDownList");
+    if (!dropdown) {
+        $("#propertyAddDropdown").kendoDropDownList({
+            size: "small",
+            dataTextField: "text",
+            dataValueField: "value",
+            optionLabel: "Select Property",
+            change: function () {
+                addSelectedProperty(this.value());
+            }
+        });
+        dropdown = $("#propertyAddDropdown").data("kendoDropDownList");
+    }
+    dropdown.value("");
+    $.ajax({
+        url: "/Home/GetMotorData",
+        type: "GET",
+        dataType: "json",
+        success: function (data) {
+            propertyAddData = [];
+            Object.keys(data || {}).forEach(function (tag) {
+                var property = tag;
+                if (tag.indexOf(".") >= 0) {
+                    property = tag.substring(tag.lastIndexOf(".") + 1);
+                }
+                propertyAddData.push({
+                    text: property,
+                    value: tag,
+                    liveValue: data[tag]
+                });
+            });
+            dropdown.setDataSource(new kendo.data.DataSource({
+                data: propertyAddData
+            }));
+            dropdown.value("");
+        },
+        error: function (xhr) {
+            console.log("Property datasource failed:", xhr.responseText);
+            propertyAddData = [];
+            dropdown.setDataSource(new kendo.data.DataSource({
+                data: []
+            }));
+            dropdown.value("");
+        }
+    });
+}
+function addSelectedProperty(tag) {
+    if (!tag || !currentModel) return;
+    var selected = null;
+    propertyAddData.forEach(function (item) {
+        if (item.value === tag) selected = item;
+    });
+    if (!selected) return;
+    for (var i = 0; i < assetLiveDataPoints.length; i++) {
+        if (assetLiveDataPoints[i].tag === tag) {
+            $("#propertyAddView").hide();
+            $("#propertiesView").show();
+            loadProperties();
+            return;
+        }
+    }
+    assetLiveDataPoints.push({
+        tag: selected.value,
+        assetProperty: selected.text,
+        value: selected.liveValue,
+        position: null,
+        positionText: null
+    });
+    saveModelJson();
+    $("#propertyAddView").hide();
+    $("#propertiesView").show();
+    loadProperties();
+}
+function addLabelRow() {
+    if (!currentModel) return;
+    $("#propertiesView").hide();
+    $("#partsView").hide();
+    $("#partEditView").hide();
+    $("#partCreateView").hide();
+    $("#propertyEditView").hide();
+    $("#propertyAddView").show();
+    $("#partsPanel").show();
+    loadPropertyAddOptions();
+}
+function updateNewLabel(index, row) {
+    var item = assetLiveDataPoints[index];
+    if (!item) return;
+    var tagName = row.find(".new-label-tag").val();
+    var value = row.find(".new-label-value").val();
+    var positionText = row.find(".new-label-position").val();
+    item.assetProperty = tagName;
+    item.tag = tagName || "newLabel" + (index + 1);
+    item.value = value;
+    item.positionText = positionText;
+    var point = getPositionPoint(positionText);
+    item.position = {
+        x: Number(point.x.toFixed(3)),
+        y: Number(point.y.toFixed(3)),
+        z: Number(point.z.toFixed(3))
+    };
+    var annotation = annotations[index];
+    if (annotation) {
+        annotation.point.copy(point);
+        annotation.tag = item.tag;
+        annotation.element.find(".annotation-title").text(tagName ? tagName.toUpperCase() : "");
+        annotation.element.find(".annotation-property-value").text(value);
+    } else {
+        createAnnotations(false);
+    }
+    updateAnnotations();
+    saveModelJson();
+}
+function updateExistingLabelPosition(index, positionText) {
+    var item = assetLiveDataPoints[index];
+    if (!item) return;
+    item.positionText = positionText;
+    var point = getPositionPoint(positionText);
+    item.position = {
+        x: Number(point.x.toFixed(3)),
+        y: Number(point.y.toFixed(3)),
+        z: Number(point.z.toFixed(3))
+    };
+    var annotation = annotations[index];
+    if (annotation) {
+        annotation.point.copy(point);
+    }
+    updateAnnotations();
+    saveModelJson();
+}
+function getModelPositions() {
+    var vertices = getMainEquipmentVertices();
+    if (!vertices.length) {
+        vertices = getAllModelVertices();
+    }
+    if (!vertices.length || !assetLiveDataPoints.length) return [];
+    var positionNames = ["Top", "Bottom", "Left", "Right", "Center", "Top Left", "Top Right", "Front", "Back", "Bottom Left", "Bottom Right"];
+    var positions = [];
+    positionNames.forEach(function (name) {
+        if (positions.length >= assetLiveDataPoints.length) return;
+        var point = getPositionPoint(name);
+        var exists = positions.some(function (item) {
+            return item.distanceToSquared(point) < .000001;
+        });
+        if (!exists) {
+            positions.push(point.clone());
+        }
+    });
+    if (positions.length < assetLiveDataPoints.length) {
+        vertices.forEach(function (point) {
+            if (positions.length >= assetLiveDataPoints.length) return;
+            var exists = positions.some(function (item) {
+                return item.distanceToSquared(point) < .000001;
+            });
+            if (!exists) {
+                positions.push(point.clone());
+            }
+        });
+    }
+    for (var i = 0; i < assetLiveDataPoints.length; i++) {
+        if (positions[i]) {
+            assetLiveDataPoints[i].position = {
+                x: Number(positions[i].x.toFixed(3)),
+                y: Number(positions[i].y.toFixed(3)),
+                z: Number(positions[i].z.toFixed(3))
+            };
+            assetLiveDataPoints[i].positionText = positionNames[i] || "Center";
+        }
+    }
+    saveModelJson();
+    return assetLiveDataPoints.map(function (item) {
+        return new THREE.Vector3(item.position.x, item.position.y, item.position.z);
+    });
+}
+function getPoints(forceRecalculate) {
+    if (!forceRecalculate) {
+        var saved = true;
+        for (var i = 0; i < assetLiveDataPoints.length; i++) {
+            if (!assetLiveDataPoints[i].position) {
+                saved = false;
+                break;
+            }
+            if (assetLiveDataPoints[i].position.x === undefined || assetLiveDataPoints[i].position.y === undefined || assetLiveDataPoints[i].position.z === undefined) {
+                saved = false;
+                break;
+            }
+        }
+        if (saved) {
+            return assetLiveDataPoints.map(function (item) {
+                return new THREE.Vector3(
+                    Number(item.position.x),
+                    Number(item.position.y),
+                    Number(item.position.z)
+                );
+            });
+        }
+    }
+    return getModelPositions();
+}
+function getSectionsData() {
+    var sections = [];
+    if (!currentModel) return sections;
+    currentModel.updateMatrixWorld(true);
+    partsData.forEach(function (part, index) {
+        if (!part) return;
+        var mesh = partsMeshes[index];
+        if (part.meshNames && part.meshNames.length) {
+            sections.push({
+                sectionName: part.text || "Unnamed Part",
+                markupColor: part.markupColor || "#ffff00",
+                meshNames: part.meshNames
+            });
+        } else if (part.selectionType === "freehand") {
+            sections.push({
+                sectionName: part.text || "Unnamed Part",
+                markupColor: part.markupColor || "#ffff00",
+                selectionType: "freehand",
+                checked: part.checked === true,
+                highlightTriangles: part.highlightTriangles || []
+            });
+        } else if (mesh) {
+            sections.push({
+                sectionName: part.text || mesh.name || "Unnamed Part",
+                positionMatrix: mesh.matrixWorld.elements.slice(),
+                markupColor: part.markupColor || null
+            });
+        }
+    });
+    return sections;
+}
+function saveModelJson(onSuccess) {
+    if (!currentModel) return;
+    var modelJson = {
+        annotations: assetLiveDataPoints,
+        sections: getSectionsData()
+    };
+    $.ajax({
+        url: "/Home/SaveAnnotations",
+        type: "POST",
+        data: {
+            annotationJson: JSON.stringify(modelJson)
+        },
+        success: function () {
+            console.log("Model JSON saved");
+            if (typeof onSuccess === "function") onSuccess();
+        },
+        error: function (xhr) {
+            console.log("Save failed:", xhr.responseText);
+        }
+    });
+}
+function saveAnnotations() {
+    saveModelJson();
+}
+function createAnnotation(point, data) {
+    var element = annotationTemplate.clone().removeAttr("id").removeAttr("style");
+    var line = element.find(".annotation-line");
+    var label = element.find(".annotation");
+    label.find(".annotation-title").text(data.title);
+    label.find(".annotation-property-value").text(data.value || "");
+    annotationLayer.append(element);
+    annotations.push({
+        point: point,
+        element: label,
+        line: line,
+        tag: data.tag
+    });
+}
+function createAnnotations(forceRecalculate) {
+    annotations = [];
+    annotationLayer.children().not("#annotationTemplate").remove();
+    if (!assetLiveDataPoints.length) return;
+    var points = getPoints(forceRecalculate);
+    for (var i = 0; i < assetLiveDataPoints.length; i++) {
+        var data = assetLiveDataPoints[i];
+        if (!data || !data.position || !points[i]) continue;
+        createAnnotation(points[i], {
+            title: data.assetProperty ? data.assetProperty.toUpperCase() : data.tag.toUpperCase(),
+            value: data.value || "",
+            tag: data.tag
+        });
+    }
+    updateAnnotations();
+    updateMotorData();
+}
+function updateAnnotations() {
+    if (!currentModel) return;
+    var width = viewer.width();
+    var height = viewer.height();
+    var positions = [];
+    annotations.forEach(function (annotation) {
+        var screen = annotation.point.clone().project(camera);
+        if (screen.z < -1 || screen.z > 1) {
+            annotation.element.hide();
+            annotation.line.hide();
+            return;
+        }
+        annotation.element.show();
+        annotation.line.show();
+        var x = (screen.x + 1) * width / 2;
+        var y = (-screen.y + 1) * height / 2;
+        var labelWidth = annotation.element.outerWidth();
+        var labelHeight = annotation.element.outerHeight();
+        var distance = 130;
+        var angle = Math.atan2(y - height / 2, x - width / 2);
+        var left = x + Math.cos(angle) * distance - labelWidth / 2;
+        var top = y + Math.sin(angle) * distance - labelHeight / 2;
+        left = Math.max(10, Math.min(left, width - labelWidth - 10));
+        top = Math.max(10, Math.min(top, height - labelHeight - 10));
+        var overlap = true;
+        var count = 0;
+        while (overlap && count < 30) {
+            overlap = false;
+            for (var i = 0; i < positions.length; i++) {
+                var previous = positions[i];
+                if (left < previous.x + previous.width &&
+                    left + labelWidth > previous.x &&
+                    top < previous.y + previous.height &&
+                    top + labelHeight > previous.y) {
+                    top += labelHeight + 10;
+                    if (top + labelHeight > height - 10) {
+                        top = 10;
+                    }
+                    overlap = true;
+                    break;
+                }
+            }
+            count++;
+        }
+        positions.push({
+            x: left,
+            y: top,
+            width: labelWidth,
+            height: labelHeight
+        });
+        var endX = left + labelWidth / 2;
+        var endY = top + labelHeight / 2;
+        var dx = endX - x;
+        var dy = endY - y;
+        var length = Math.sqrt(dx * dx + dy * dy);
+        var rotation = Math.atan2(dy, dx) * 180 / Math.PI;
+        annotation.element.css({
+            left: left + "px",
+            top: top + "px"
+        });
+        annotation.line.css({
+            left: x + "px",
+            top: y + "px",
+            width: length + "px",
+            transform: "rotate(" + rotation + "deg)"
+        });
+    });
 }
 function loadParts() {
     partsData = [];
     partsMeshes = [];
     partHighlights = [];
     if (!currentModel) return;
+    currentModel.updateMatrixWorld(true);
+    var savedModelSections = (savedSectionsData || []).filter(function (section) {
+        return section && !section.meshNames && section.selectionType !== "freehand";
+    });
     currentModel.traverse(function (child) {
         if (!child.isMesh) return;
+        var partIndex = partsData.length;
         var partName = child.name;
         if (!partName || partName === "undefined" || partName === "null") {
             partName = "Unnamed Part";
         }
+        var savedSection = savedModelSections[partIndex];
+        var markupColor = savedSection && savedSection.markupColor
+            ? savedSection.markupColor
+            : "#" + new THREE.Color().setHSL(Math.random(), .8, .25).getHexString();
+        if (savedSection && savedSection.sectionName) {
+            partName = savedSection.sectionName;
+            child.name = partName;
+        }
         partsData.push({
             id: partsData.length,
             text: partName,
-            checked: false
+            checked: savedSection ? savedSection.checked === true : false,
+            markupColor: markupColor,
+            selectionType: "model"
         });
         partsMeshes.push(child);
+    });
+    (savedSectionsData || []).forEach(function (section) {
+        if (!section || !section.meshNames || !section.meshNames.length) return;
+        partsData.push({
+            id: partsData.length,
+            text: section.sectionName || "Unnamed Part",
+            markupColor: section.markupColor || "#ffff00",
+            meshNames: section.meshNames
+        });
+        partsMeshes.push(null);
+    });
+    (savedSectionsData || []).forEach(function (section) {
+        if (!section || section.selectionType !== "freehand") return;
+        partsData.push({
+            id: partsData.length,
+            text: section.sectionName || "Unnamed Part",
+            checked: section.checked === true,
+            markupColor: section.markupColor || "#ffff00",
+            selectionType: "freehand",
+            highlightTriangles: section.highlightTriangles || []
+        });
+        partsMeshes.push(null);
     });
     if ($("#partsList").data("kendoListView")) {
         $("#partsList").data("kendoListView").destroy();
@@ -155,270 +736,136 @@ function loadParts() {
     }
     partsList = $("#partsList").kendoListView({
         dataSource: partsData,
-        template: kendo.template($("#partTemplate").html()),
-        dataBound: function () {
-            $("#partsList .part-check").each(function () {
-                if (!$(this).data("kendoCheckBox")) {
-                    $(this).kendoCheckBox();
-                }
-            });
-        }
+        template: kendo.template($("#partTemplate").html())
     }).data("kendoListView");
     $("#partsList").off("change.partCheck").on("change.partCheck", ".part-check", function () {
         var index = parseInt($(this).attr("data-index"), 10);
         if (partsData[index]) {
             partsData[index].checked = this.checked;
         }
-        updatePartHighlight();
+        if (partsData[index] && (partsData[index].selectionType === "freehand" || (partsData[index].meshNames && partsData[index].meshNames.length))) {
+            if (partsData[index].checked) showSavedPartHighlight(partsData[index]);
+            else removeSavedPartHighlight(partsData[index]);
+        } else {
+            updatePartHighlight();
+        }
+        saveModelJson();
     });
     $("#partsList").off("click.partEdit").on("click.partEdit", ".part-edit", function (e) {
         e.preventDefault();
         e.stopPropagation();
-        renamePart($(this));
+        var index = parseInt($(this).attr("data-index"), 10);
+        openPartColor(index);
     });
-}
-function renamePart(button) {
-    if (!partsList) return;
-    var index = parseInt(button.attr("data-index"), 10);
-    if (isNaN(index) || !partsMeshes[index]) return;
-    var item = partsList.dataSource.data()[index];
-    if (!item) return;
-    var textSpan = button.siblings(".part-name");
-    var spanPos = textSpan.offset();
-    var panelPos = $("#partsPanel").offset();
-    renamingIndex = index;
-    renameInput.val(item.text);
-    renameInput.css({
-        left: (spanPos.left - panelPos.left) + "px",
-        top: (spanPos.top - panelPos.top) + "px",
-        width: textSpan.outerWidth() + "px"
+    updatePartHighlight();
+    partsData.forEach(function (part) {
+        if ((part.selectionType === "freehand" || (part.meshNames && part.meshNames.length)) && part.checked) showSavedPartHighlight(part);
     });
-    renameInput.show().trigger("focus").select();
+    if (!savedSectionsData.length) {
+        saveModelJson();
+    }
 }
-function commitRename() {
-    if (renamingIndex < 0) return;
-    var index = renamingIndex;
-    renamingIndex = -1;
-    renameInput.hide();
-    var newName = $.trim(renameInput.val());
-    if (newName === "") return;
-    var item = partsList.dataSource.data()[index];
-    if (item) item.set("text", newName);
-    if (partsMeshes[index]) partsMeshes[index].name = newName;
+function openPartColor(index) {
+    editingIndex = index;
+    $("#partsView").hide();
+    $("#partEditView").show();
+    var colorPicker = $("#partColorEdit").data("kendoColorPicker");
+    if (!colorPicker) {
+        $("#partColorEdit").kendoColorPicker({
+            buttons: true,
+            size: "small",
+            popup: {
+                appendTo: "#partsPanel",
+                position: "top left"
+            }
+        });
+        colorPicker = $("#partColorEdit").data("kendoColorPicker");
+    }
+    colorPicker.value(partsData[index].markupColor || "#555555");
+    initializePartRename();
+    loadPartRename(index);
 }
-function cancelRename() {
-    renamingIndex = -1;
-    renameInput.hide();
+function commitPartColor() {
+    if (editingIndex < 0) {
+        return;
+    }
+    var index = editingIndex;
+    var colorPicker = $("#partColorEdit").data("kendoColorPicker");
+    var color = colorPicker ? colorPicker.value() : partsData[index].markupColor;
+    partsData[index].markupColor = color;
+    savePartRename(index);
+    updatePartHighlight();
+    $("#partEditView").hide();
+    $("#partsView").show();
+    editingIndex = -1;
+    saveModelJson();
 }
-renameInput.on("keydown", function (e) {
-    if (e.which === 13) commitRename();
-    else if (e.which === 27) cancelRename();
-});
-renameInput.on("blur", function () {
-    commitRename();
-});
+function cancelPartColor() {
+    $("#partEditView").hide();
+    $("#partsView").show();
+    editingIndex = -1;
+}
+function initializePartRename() {
+    var renameBox = $("#partRenameEdit").data("kendoTextBox");
+    if (!renameBox) {
+        $("#partRenameEdit").kendoTextBox({
+            size: "small"
+        });
+    }
+}
+function loadPartRename(index) {
+    var renameBox = $("#partRenameEdit").data("kendoTextBox");
+    if (renameBox) {
+        renameBox.value(partsData[index].text || "");
+    }
+}
+function savePartRename(index) {
+    var renameBox = $("#partRenameEdit").data("kendoTextBox");
+    if (!renameBox) {
+        return;
+    }
+    var newName = renameBox.value();
+    if (!newName) {
+        newName = partsData[index].text;
+    }
+    partsData[index].text = newName;
+    if (partsMeshes[index]) {
+        partsMeshes[index].name = newName;
+    }
+    $("#partsList .part-row").eq(index).find(".part-name").text(newName);
+    $("#partsList .part-row").eq(index).find(".part-name").attr("title", newName);
+    saveModelJson();
+}
 function updatePartHighlight() {
     if (!partsList || !partsMeshes.length) return;
     partsMeshes.forEach(function (mesh, index) {
         var item = partsData[index];
-        if (!item) return;
+        if (!item || !mesh || item.selectionType === "freehand" || (item.meshNames && item.meshNames.length)) return;
         if (item.checked) {
-            if (!partHighlights[index]) {
+            if (partHighlights[index]) {
+                partHighlights[index].material.color.set(item.markupColor);
+            } else {
                 var edges = new THREE.EdgesGeometry(mesh.geometry, 15);
-                var material = new THREE.LineDashedMaterial({
-                    color: 0xffff00,
-                    dashSize: .025,
-                    gapSize: .015,
+                var material = new THREE.LineBasicMaterial({
+                    color: item.markupColor,
                     transparent: true,
                     opacity: 1,
                     depthTest: false
                 });
                 var line = new THREE.LineSegments(edges, material);
-                line.computeLineDistances();
                 line.renderOrder = 1000;
+                line.scale.set(1.002, 1.002, 1.002);
                 mesh.add(line);
                 partHighlights[index] = line;
             }
         } else {
             if (partHighlights[index]) {
-                mesh.remove(partHighlights[index]);
+                partsMeshes[index].remove(partHighlights[index]);
                 partHighlights[index].geometry.dispose();
                 partHighlights[index].material.dispose();
                 partHighlights[index] = null;
             }
         }
-    });
-}
-function getPoints() {
-    var vertices = [];
-    if (!currentModel) return [];
-    currentModel.updateMatrixWorld(true);
-    currentModel.traverse(function (child) {
-        if (!child.isMesh || !child.geometry) return;
-        var position = child.geometry.attributes.position;
-        if (!position) return;
-        var step = Math.max(1, Math.floor(position.count / 1000));
-        for (var i = 0; i < position.count; i += step) {
-            vertices.push(new THREE.Vector3().fromBufferAttribute(position, i).applyMatrix4(child.matrixWorld));
-        }
-    });
-    if (!vertices.length) return [];
-    var box = new THREE.Box3().setFromObject(currentModel);
-    var center = box.getCenter(new THREE.Vector3());
-    var selected = [];
-    var first = vertices[0];
-    var firstDistance = first.distanceTo(center);
-    vertices.forEach(function (vertex) {
-        var distance = vertex.distanceTo(center);
-        if (distance < firstDistance) {
-            first = vertex;
-            firstDistance = distance;
-        }
-    });
-    selected.push(first.clone());
-    while (selected.length < assetLiveDataPoints.length && selected.length < vertices.length) {
-        var bestVertex = null;
-        var bestDistance = -1;
-        vertices.forEach(function (vertex) {
-            var nearest = Infinity;
-            selected.forEach(function (point) {
-                nearest = Math.min(nearest, vertex.distanceTo(point));
-            });
-            if (nearest > bestDistance) {
-                bestDistance = nearest;
-                bestVertex = vertex;
-            }
-        });
-        if (!bestVertex) break;
-        selected.push(bestVertex.clone());
-    }
-    for (var i = 0; i < assetLiveDataPoints.length; i++) {
-        var point = selected[i % selected.length];
-        assetLiveDataPoints[i].position = {
-            x: Number(point.x.toFixed(3)),
-            y: Number(point.y.toFixed(3)),
-            z: Number(point.z.toFixed(3))
-        };
-        vertices[i] = point.clone();
-    }
-    var annotationJson = JSON.stringify(assetLiveDataPoints);
-    var modelName = url ? url.substring(url.lastIndexOf("/") + 1) : "";
-    if (modelName) {
-        $.ajax({
-            url: "/Home/SaveAnnotations",
-            type: "POST",
-            data: {
-                modelName: modelName,
-                annotationJson: annotationJson
-            },
-            success: function () {
-                console.log("Annotations saved to DB");
-            },
-            error: function (xhr) {
-                console.log("Save failed:", xhr.responseText);
-            }
-        });
-    }
-    console.log(annotationJson);
-    return selected;
-}
-function createAnnotation(point, data) {
-    var element = annotationTemplate.clone().removeAttr("id").removeAttr("style");
-    var line = element.find(".annotation-line");
-    var label = element.find(".annotation");
-    label.find(".annotation-title").text(data.title);
-    label.find(".annotation-property-value").text(data.value);
-    annotationLayer.append(element);
-    annotations.push({ point: point, element: label, line: line });
-}
-function createAnnotations() {
-    annotations = [];
-    annotationLayer.children().not("#annotationTemplate").remove();
-    var points = getPoints();
-    for (var i = 0; i < points.length; i++) {
-        var data = assetLiveDataPoints[i];
-        var value = annotationValues[i] ? annotationValues[i].value : "";
-        createAnnotation(points[i], {
-            title: data.assetProperty.toUpperCase(),
-            value: value
-        });
-    }
-    updateAnnotations();
-    updateMotorData();
-}
-function updateAnnotations() {
-    var width = viewer.width();
-    var height = viewer.height();
-    var positions = [];
-    var directions = [
-        { x: 0, y: -1 },
-        { x: 1, y: -1 },
-        { x: 1, y: 0 },
-        { x: 1, y: 1 },
-        { x: 0, y: 1 },
-        { x: -1, y: 1 },
-        { x: -1, y: 0 },
-        { x: -1, y: -1 }
-    ];
-    annotations.forEach(function (annotation) {
-        var screen = annotation.point.clone().project(camera);
-        if (screen.z < -1 || screen.z > 1) {
-            annotation.element[0].style.display = "none";
-            annotation.line[0].style.display = "none";
-            return;
-        }
-        annotation.element[0].style.display = "";
-        annotation.line[0].style.display = "";
-        var x = (screen.x + 1) * width / 2;
-        var y = (-screen.y + 1) * height / 2;
-        var labelWidth = annotation.element.outerWidth();
-        var labelHeight = annotation.element.outerHeight();
-        var labelDistance = 180;
-        var chosenX = x;
-        var chosenY = y;
-        var outward = Math.round(Math.atan2(y - height / 2, x - width / 2) / (Math.PI / 4)) & 7;
-        for (var k = 0; k < directions.length; k++) {
-            var i = (outward + k) % directions.length;
-            var direction = directions[i];
-            var testX = x + direction.x * labelDistance - labelWidth / 2;
-            var testY = y + direction.y * labelDistance - labelHeight / 2;
-            testX = Math.max(10, Math.min(testX, width - labelWidth - 10));
-            testY = Math.max(10, Math.min(testY, height - labelHeight - 10));
-            var overlap = false;
-            for (var j = 0; j < positions.length; j++) {
-                var previous = positions[j];
-                if (testX < previous.x + previous.width + 15 &&
-                    testX + labelWidth + 15 > previous.x &&
-                    testY < previous.y + previous.height + 15 &&
-                    testY + labelHeight + 15 > previous.y) {
-                    overlap = true;
-                    break;
-                }
-            }
-            if (!overlap) {
-                chosenX = testX;
-                chosenY = testY;
-                break;
-            }
-        }
-        positions.push({
-            x: chosenX,
-            y: chosenY,
-            width: labelWidth,
-            height: labelHeight
-        });
-        var endX = chosenX + labelWidth / 2;
-        var endY = chosenY + labelHeight / 2;
-        var lineDX = endX - x;
-        var lineDY = endY - y;
-        var lineLength = Math.sqrt(lineDX * lineDX + lineDY * lineDY) || 1;
-        var angle = Math.atan2(lineDY, lineDX) * 180 / Math.PI;
-        annotation.element[0].style.left = chosenX + "px";
-        annotation.element[0].style.top = chosenY + "px";
-        annotation.line[0].style.left = x + "px";
-        annotation.line[0].style.top = y + "px";
-        annotation.line[0].style.width = lineLength + "px";
-        annotation.line[0].style.transform = "rotate(" + angle + "deg)";
     });
 }
 function resizeViewer() {
@@ -434,6 +881,8 @@ function loadModel() {
     if (fileType === ".gltf" || fileType === ".glb") {
         new THREE.GLTFLoader().load(url, function (data) {
             addModel(data.scene);
+        }, undefined, function (error) {
+            console.log("GLTF load failed:", error);
         });
     } else if (fileType === ".obj") {
         var objLoader = new THREE.OBJLoader();
@@ -466,6 +915,9 @@ function loadModel() {
                         addModel(object);
                     });
                 });
+            },
+            error: function (xhr) {
+                console.log("OBJ read failed:", xhr.responseText);
             }
         });
     } else if (fileType === ".fbx") {
@@ -475,12 +927,26 @@ function loadModel() {
     } else if (fileType === ".stl") {
         new THREE.STLLoader().load(url, function (geometry) {
             geometry.computeVertexNormals();
-            addModel(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: .2, roughness: .55 })));
+            addModel(new THREE.Mesh(
+                geometry,
+                new THREE.MeshStandardMaterial({
+                    color: 0xaaaaaa,
+                    metalness: .2,
+                    roughness: .55
+                })
+            ));
         });
     } else if (fileType === ".ply") {
         new THREE.PLYLoader().load(url, function (geometry) {
             geometry.computeVertexNormals();
-            addModel(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: .2, roughness: .55 })));
+            addModel(new THREE.Mesh(
+                geometry,
+                new THREE.MeshStandardMaterial({
+                    color: 0xaaaaaa,
+                    metalness: .2,
+                    roughness: .55
+                })
+            ));
         });
     } else if (fileType === ".dae") {
         new THREE.ColladaLoader().load(url, function (data) {
@@ -503,6 +969,45 @@ $("#chooseFiles").on("click", function () {
 $("#files").on("change", function () {
     uploadFiles(this.files, false);
 });
+$(document).on("click", "#savePartEdit", function () {
+    commitPartColor();
+});
+$(document).on("click", "#cancelPartEdit", function () {
+    cancelPartColor();
+});
+$(document).on("click", "#addLabelButton", function () {
+    if (!currentModel) return;
+    $("#propertiesView").hide();
+    $("#partsView").hide();
+    $("#partEditView").hide();
+    $("#partCreateView").hide();
+    $("#propertyEditView").hide();
+    $("#propertyAddView").show();
+    $("#partsPanel").show();
+    addLabelRow();
+});
+$(document).on("input", ".new-label-tag, .new-label-value", function () {
+    var row = $(this).closest(".property-row");
+    var index = parseInt(row.attr("data-index"), 10);
+    updateNewLabel(index, row);
+});
+$(document).on("input", ".new-label-position", function () {
+    var row = $(this).closest(".property-row");
+    var index = parseInt(row.attr("data-index"), 10);
+    updateNewLabel(index, row);
+});
+$(document).on("input", ".edit-label-position", function () {
+    var row = $(this).closest(".property-row");
+    var index = parseInt(row.attr("data-index"), 10);
+    updateExistingLabelPosition(index, $(this).val());
+});
+$(document).on("click", ".property-edit", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    var index = parseInt($(this).attr("data-index"), 10);
+    if (index < 0 || !assetLiveDataPoints[index]) return;
+    console.log("Edit property:", assetLiveDataPoints[index]);
+});
 function uploadFiles(files, isFolder) {
     if (!files || !files.length) {
         $("#fileName").text(isFolder ? "No Folder Chosen" : "No Files Chosen");
@@ -510,13 +1015,9 @@ function uploadFiles(files, isFolder) {
     }
     $("#fileName").text(files.length + " Files Selected");
     var formData = new FormData();
-    var selectedModelName = "";
     $.each(files, function (i, file) {
         formData.append("files", file);
         formData.append("filePaths", isFolder ? (file.webkitRelativePath || file.name) : file.name);
-        if (!selectedModelName && /\.(gltf|glb|obj|fbx|stl|ply|dae)$/i.test(file.name)) {
-            selectedModelName = file.name;
-        }
     });
     $.ajax({
         url: "/Home/Upload",
@@ -526,37 +1027,49 @@ function uploadFiles(files, isFolder) {
         contentType: false,
         success: function (response) {
             if (response.success) {
-                $.ajax({
-                    url: "/Home/GetAnnotations",
-                    type: "GET",
-                    data: {
-                        modelName: selectedModelName
-                    },
-                    success: function (data) {
-                        if (data.annotationJson) {
-                            assetLiveDataPoints = JSON.parse(data.annotationJson);
-                            console.log("Annotations loaded from DB");
-                        }
-                        window.location.href = "/Home/Index";
-                    },
-                    error: function (xhr) {
-                        console.log("Load failed:", xhr.responseText);
-                        window.location.href = "/Home/Index";
-                    }
-                });
+                window.location.href = "/Home/Index";
             } else {
                 alert(response.message);
             }
+        },
+        error: function (xhr) {
+            console.log("Upload failed:", xhr.responseText);
         }
     });
 }
 $("#partsButton").on("click", function () {
-    $("#partsPanel").toggle();
+    if ($("#partsPanel").is(":visible") && $("#partsView").is(":visible")) {
+        $("#partsPanel").hide();
+        return;
+    }
+    $("#propertiesView").hide();
+    $("#propertyAddView").hide();
+    $("#partEditView").hide();
+    $("#partsView").show();
+    $("#partsPanel").show();
+});
+$("#propertiesButton").on("click", function () {
+    if ($("#partsPanel").is(":visible") && $("#propertiesView").is(":visible")) {
+        $("#partsPanel").hide();
+        return;
+    }
+    $("#partsView").hide();
+    $("#partEditView").hide();
+    $("#propertyAddView").hide();
+    $("#propertiesView").show();
+    $("#partsPanel").show();
+    loadProperties();
 });
 $("#resetView").on("click", function () {
-    if (!currentModel) return;
-    fitModel(currentModel);
-    updateAnnotations();
+    if (currentModel) {
+        fitModel(currentModel);
+        partsData.forEach(function (item) {
+            item.checked = false;
+        });
+        $("#partsList .part-check").prop("checked", false);
+        updatePartHighlight();
+        updateAnnotations();
+    }
 });
 $(window).on("resize", resizeViewer);
 setInterval(updateMotorData, 10000);
@@ -564,6 +1077,7 @@ function animate() {
     requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
+    updateAnnotations();
 }
 loadModel();
 animate();

@@ -123,7 +123,7 @@
       <DependentUpon>Global.asax</DependentUpon>
     </Compile>
     <Compile Include="Models\AssetModel.cs" />
-    <Compile Include="Models\ModelAnnotation.cs" />
+    <Compile Include="Models\Function.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -167,6 +167,8 @@
     <Content Include="Scripts\kendoUI.js" />
     <Content Include="Scripts\modelViewer.js" />
     <Content Include="Scripts\modernizr-2.8.3.js" />
+    <Content Include="Scripts\script2.js" />
+    <Content Include="Scripts\script3.js" />
     <Content Include="Web.config" />
     <Content Include="Web.Debug.config">
       <DependentUpon>Web.config</DependentUpon>
